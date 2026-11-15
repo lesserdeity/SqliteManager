@@ -264,5 +264,5 @@ Rules:
 - `.gitattributes`: text is stored with LF and checked out with CRLF.
 - `.github/workflows/ci.yml`: build and test on `windows-latest` for pushes to main and for pull requests.
 - `.github/workflows/release.yml`: pushing a tag `vX.Y.Z` runs the tests, publishes the App and the Cli self-contained for win-x64 into one folder, and attaches `SqliteManager-X.Y.Z-win-x64.zip` to a GitHub Release.
-- `.github/dependabot.yml`: weekly NuGet updates (CsvHelper major updates ignored), monthly GitHub Actions updates.
+- `.github/dependabot.yml`: monthly, one grouped PR per ecosystem (NuGet, Actions), majors included except CsvHelper 34. Dependabot alerts and security updates are on in the repo settings (2026-11-15).
 - README screenshots are in `docs/images/`. They were taken with fictional sample databases (`bookshop.db`, `archive.db`).

@@ -1,14 +1,22 @@
 version: 2
+
+# Security updates are turned on in the repository settings: a package with a known
+# vulnerability gets its own pull request as soon as a fix is published.
+#
+# Version updates are kept quiet: once a month, all updates for an ecosystem arrive in one
+# grouped pull request. CI shows whether the group is safe to merge.
+#
+# There is no blanket "ignore major versions" rule on purpose: ignore rules can also hold back
+# security fixes, and a security fix sometimes needs a major version.
 updates:
   - package-ecosystem: nuget
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      # Minor and patch updates arrive as one pull request; major updates arrive one at a time.
-      minor-and-patch:
-        update-types: [minor, patch]
+      nuget:
+        patterns: ['*']
     ignore:
       # CsvHelper 34 is a rewrite with a new API. Stay on 33.x until the code is ported.
       - dependency-name: CsvHelper
@@ -18,3 +26,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ['*']
