@@ -1,12 +1,24 @@
 # SqliteManager
 
+[![CI](https://github.com/lesserdeity/SqliteManager/actions/workflows/ci.yml/badge.svg)](https://github.com/lesserdeity/SqliteManager/actions/workflows/ci.yml)
+
 A Windows desktop manager for SQLite databases, built with .NET 10 and WinForms.
 It has an Office-style ribbon, a SQL editor, visual table and query designers,
 import and export, and saved jobs that you can run from the app or from the command line.
 
+![Object explorer and the data grid](docs/images/data-grid.png)
+
+| Query editor | Query designer (dark theme) |
+|---|---|
+| ![Query editor with results](docs/images/query-editor.png) | ![Query designer in the dark theme](docs/images/query-designer-dark.png) |
+
+## Download
+
+Download the latest zip from [Releases](https://github.com/lesserdeity/SqliteManager/releases), unzip it anywhere, and run `SqliteManager.App.exe`. The .NET runtime is included. The command-line job runner, `SqliteManager.Cli.exe`, is in the same folder.
+
 ## Features
 
-- **Databases**: create, open, or open read-only. Work with several databases at once, attach other files, and reopen recent files.
+- **Databases**: create, open, or open read-only. Work with several databases at once, attach other files (autocomplete knows their tables), and reopen recent files.
 - **Object explorer**: tables, views, indexes, and triggers. Tables expand to show columns, keys, and indexes. Script as CREATE, INSERT, or DROP. Rename and drop objects (drops ask first).
 - **Data grid**: browse large tables quickly with a virtual grid. Filter, sort, and edit cells. Insert and delete rows, set NULL, and view or edit BLOBs as hex, text, or images. Changes are written together in one transaction.
 - **Query editor**: syntax highlighting, autocomplete, and folding. Run all, the selection, or the statement at the caret, and cancel a running query. Each result set opens in its own tab. Also includes query history, Explain Plan, and opening and saving `.sql` files.
@@ -18,12 +30,9 @@ import and export, and saved jobs that you can run from the app or from the comm
 - **SQL log**: every statement the app runs is shown in the SQL Log pane.
 - **Light and dark themes**.
 
-## Requirements
+## Build from source
 
-- Windows 10 or 11
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-
-## Build and run
+You need Windows 10 or 11 and the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```
 dotnet build SqliteManager.sln

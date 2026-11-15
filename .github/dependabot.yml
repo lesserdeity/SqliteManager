@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Minor and patch updates arrive as one pull request; major updates arrive one at a time.
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # CsvHelper 34 is a rewrite with a new API. Stay on 33.x until the code is ported.
+      - dependency-name: CsvHelper
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

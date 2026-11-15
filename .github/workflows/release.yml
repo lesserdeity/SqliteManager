@@ -1,0 +1,58 @@
+name: Release
+
+# Push a tag such as v0.1.0 to build, test, and publish a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Read version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: dotnet test SqliteManager.sln --configuration Release
+
+      # The app and the CLI go into one folder and share one copy of the .NET runtime.
+      - name: Publish
+        shell: pwsh
+        run: |
+          foreach ($project in 'SqliteManager.App', 'SqliteManager.Cli') {
+            dotnet publish "src/$project" --configuration Release --runtime win-x64 --self-contained `
+              -p:Version=${{ steps.version.outputs.version }} --output publish
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Copy-Item LICENSE, README.md publish/
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath "SqliteManager-${{ steps.version.outputs.version }}-win-x64.zip"
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          Windows x64 build. The .NET runtime is included, so nothing else needs to be installed.
+
+          Unzip it anywhere and run ``SqliteManager.App.exe``. The command-line job runner, ``SqliteManager.Cli.exe``, is in the same folder.
+          "@
+          gh release create '${{ github.ref_name }}' "SqliteManager-${{ steps.version.outputs.version }}-win-x64.zip" `
+            --title "SqliteManager ${{ steps.version.outputs.version }}" --notes $notes --generate-notes
