@@ -26,6 +26,7 @@ Rules:
 
 ## Working rules
 
+- Machine-specific notes are in `CLAUDE.local.md` (not in git).
 - Read `docs/SPEC.md` before each phase.
 - Make a plan for the phase. Show the plan before you write code.
 - Write xUnit tests for all new `Core` logic.
@@ -52,7 +53,6 @@ Rules:
 - Cli: placeholder that prints usage. The job runner comes in Phase 5.
 - Tests: 53 passing, including opening a 1,000,000-row table in under 2 seconds.
 - Deferred by agreement: recent-files list (Phase 7, with settings), `ATTACH DATABASE` (later phase).
-- Git is not installed on this machine, so `git init` has not run. `.gitignore` exists.
 
 ### Phase 2 — Query editor: done (2026-11-12), awaiting review
 - Packages: `Scintilla5.NET` 7.1.1 (App; ships net8.0-windows, runs on net10).
@@ -157,12 +157,11 @@ Rules:
   - Ribbon "External Data" tab. Explorer menu: Import Data / Export Data. Result tabs: Export... (re-runs SELECT, WITH, or VALUES).
 - Tests: 372 passing, including 100k CSV rows imported in under 10 s.
 - Checked by hand: the CLI exe (list, run, exit codes 0 and 1, history), and the import wizard in the app (CSV with ; delimiter, de-DE numbers, dd.MM.yyyy dates, preview, new table, run).
-- Also checked by hand afterwards: the export wizard (SQL with an @Min parameter, CSV with {date}, parameter prompt), the Jobs tab (it lists the user's real saved jobs and history; left untouched), and the script job editor (opened and cancelled; nothing saved).
+- Also checked by hand afterwards: the export wizard (SQL with an @Min parameter, CSV with {date}, parameter prompt), the Jobs tab, and the script job editor (opened and cancelled; nothing saved).
 - Bugs found in that check and fixed:
   - The export wizard's "table" and "SQL" options could both be selected, and the SQL box stayed disabled.
   - Enter in the parameter dialog did not run the job.
   - Esc while autocomplete is open could close the dialog around the SQL editor.
-- Note: earlier phases' UI tests ran queries in the real app, which added entries to `%APPDATA%\SqliteManager\query-history.jsonl`. They were left there for the user to keep or clear.
 
 ### Phase 6 — Query designer: done (2026-11-13), awaiting review
 - The user approved the plans for Phases 6 and 7 together ("go with your recommendations, complete all remaining phases").
@@ -248,5 +247,4 @@ Rules:
 - Fixed during the check:
   - The selected ribbon tab's text was hard to read in dark mode.
   - The empty document area and the document tab strip stayed light in dark mode.
-- The user's `%APPDATA%\SqliteManager\settings.json` did not exist before testing. The one created by the test runs was deleted. Query history was not changed.
 - Not done: Detach is in the ribbon and the explorer, but autocomplete does not list tables of attached databases.
