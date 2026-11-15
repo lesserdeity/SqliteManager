@@ -38,7 +38,7 @@ Rules:
 
 ## Progress
 
-### Phase 1 — Foundation: done (2026-11-12), awaiting review
+### Phase 1 — Foundation: done (2026-11-12), reviewed (2026-11-15)
 - Solution `SqliteManager.sln` (classic .sln format) with Core, App, Cli, Core.Tests. `Directory.Build.props` sets nullable, implicit usings, warnings as errors.
 - Packages: `Microsoft.Data.Sqlite` 11.0.0 (Core), xUnit (Tests).
 - Core:
@@ -54,7 +54,7 @@ Rules:
 - Tests: 53 passing, including opening a 1,000,000-row table in under 2 seconds.
 - Deferred by agreement: recent-files list (Phase 7, with settings), `ATTACH DATABASE` (later phase).
 
-### Phase 2 — Query editor: done (2026-11-12), awaiting review
+### Phase 2 — Query editor: done (2026-11-12), reviewed (2026-11-15)
 - Packages: `Scintilla5.NET` 7.1.1 (App; ships net8.0-windows, runs on net10).
 - Decisions agreed with the user:
   - Open/Save `.sql` is in Phase 2.
@@ -86,7 +86,7 @@ Rules:
 - Post-review tweak (user request): document tabs have a close X (`Ui/ClosableTabControl`). Ctrl+F4 closes the active tab, the same as Ctrl+W.
 - Still in later phases: `EXPLAIN QUERY PLAN` tree (7), exporting result grids (5).
 
-### Phase 3 — Data CRUD: done (2026-11-12), awaiting review
+### Phase 3 — Data CRUD: done (2026-11-12), reviewed (2026-11-15)
 - Decisions agreed with the user:
   - Sort (click a header: ascending, descending, off) and Ctrl+C as TSV with headers are included.
   - Write asks for confirmation only when the batch deletes rows.
@@ -109,7 +109,7 @@ Rules:
   - Closing a data tab, its database, or the app with pending changes asks Write / Discard / Cancel.
 - Tests: 219 passing at the end of Phase 3. Also exercised in the running app: create a database, run DDL and INSERTs, edit cells, Set NULL, delete, insert, write with the delete confirmation, filter, sort, the BLOB viewer, Ctrl+C, the close prompt, and Revert.
 
-### Phase 4 — Table designer: done (2026-11-12), awaiting review
+### Phase 4 — Table designer: done (2026-11-12), reviewed (2026-11-15)
 - Decisions agreed with the user:
   - A rebuild puts `foreign_keys` back to its previous value, not always ON.
   - Rename is included: tables use native RENAME; views, indexes, and triggers are dropped and re-created.
@@ -138,7 +138,7 @@ Rules:
   - Apply asks first when columns or indexes would be dropped. Apply, Rename, and Drop are refused while the object's data tab has unwritten changes.
 - Tests: 291 passing at the end of Phase 4, including before/after data comparisons for every rebuild path. Also exercised in the running app: designer load, native add-column preview, rebuild preview and apply (data intact), Script as CREATE, rename with an open designer and data tab, drop-view confirmation, view editor apply, and the trigger editor.
 
-### Phase 5 — Import/export and jobs: done (2026-11-12), awaiting review
+### Phase 5 — Import/export and jobs: done (2026-11-12), reviewed (2026-11-15)
 - Decisions agreed with the user:
   - The app asks before truncate or replace imports and before export overwrites. The CLI runs jobs as configured, without asking.
   - Script transactionMode `single` runs all steps in one transaction (a failing `stop` step rolls everything back); `none` lets each statement commit. A `runJob` on the same database joins the transaction.
@@ -163,7 +163,7 @@ Rules:
   - Enter in the parameter dialog did not run the job.
   - Esc while autocomplete is open could close the dialog around the SQL editor.
 
-### Phase 6 — Query designer: done (2026-11-13), awaiting review
+### Phase 6 — Query designer: done (2026-11-13), reviewed (2026-11-15)
 - The user approved the plans for Phases 6 and 7 together ("go with your recommendations, complete all remaining phases").
 - Decisions (my recommendations):
   - Criteria work like Access. `abc` means `= 'abc'`. Also supported: `>5`, `<>x`, `LIKE A%`, `IN (...)`, `BETWEEN a AND b`, `IS [NOT] NULL`.
@@ -205,7 +205,7 @@ Rules:
   - Save As `.qdesign` and Send to Query Tab.
 - Fixed during the check: a combo cell in the criteria grid needed two clicks to open. One click now opens it.
 
-### Phase 7 — Maintenance and polish: done (2026-11-13), awaiting review
+### Phase 7 — Maintenance and polish: done (2026-11-13), reviewed (2026-11-15)
 - Decisions (my recommendations, approved together with Phase 6):
   - Check results:
     - When there are no problems, a check shows a message box.
@@ -247,4 +247,22 @@ Rules:
 - Fixed during the check:
   - The selected ribbon tab's text was hard to read in dark mode.
   - The empty document area and the document tab strip stayed light in dark mode.
-- Not done: Detach is in the ribbon and the explorer, but autocomplete does not list tables of attached databases.
+- Not done at the end of Phase 7: autocomplete did not list tables of attached databases. Added after review (see below).
+
+### After review (2026-11-15)
+- The user reviewed all seven phases.
+- Autocomplete covers attached databases:
+  - `SchemaSnapshot.Attached` holds an `AttachedSchema` (tables, views, columns) per attached database, in attach order. `SchemaService.GetSnapshotAsync` reads each schema with `"name".sqlite_schema` and `pragma_table_info(table, @schema)`.
+  - `aux.` lists that database's tables and views; `main.` lists main's. Attached schema names appear in the normal list (kind `Schema`), quoted when needed.
+  - `alias.` after `FROM aux.t alias`, and `aux.t.`, list the columns of the attached table. An unqualified name is looked up in main first, then the attached databases in order, as SQLite does.
+  - ATTACH and DETACH count as schema changes, so query tabs refresh their names after running them. The ribbon's Attach and Detach do the same.
+- Tests: 474 passing.
+- Checked in the running app: the SQL `ATTACH` refreshes the explorer, `archive.` lists `orders_2024`, and `a.` after `archive.orders_2024 a` lists its columns.
+
+### Repository (2026-11-15)
+- GitHub: `lesserdeity/SqliteManager`, public, MIT. `CLAUDE.local.md` (machine notes) is in `.gitignore`.
+- `.gitattributes`: text is stored with LF and checked out with CRLF.
+- `.github/workflows/ci.yml`: build and test on `windows-latest` for pushes to main and for pull requests.
+- `.github/workflows/release.yml`: pushing a tag `vX.Y.Z` runs the tests, publishes the App and the Cli self-contained for win-x64 into one folder, and attaches `SqliteManager-X.Y.Z-win-x64.zip` to a GitHub Release.
+- `.github/dependabot.yml`: weekly NuGet updates (CsvHelper major updates ignored), monthly GitHub Actions updates.
+- README screenshots are in `docs/images/`. They were taken with fictional sample databases (`bookshop.db`, `archive.db`).

@@ -1618,7 +1618,7 @@ internal sealed class MainForm : Form
         {
             await service.AttachAsync(dialog.FileName, name);
             _messages.Info($"Attached {dialog.FileName} to {session.DisplayName} as {name}. Query it as {name}.table_name.");
-            await _explorer.RefreshDatabaseAsync(session);
+            await OnSchemaChangedAsync(session);
         });
     }
 
@@ -1656,7 +1656,7 @@ internal sealed class MainForm : Form
         {
             await new AttachService(session).DetachAsync(name);
             _messages.Info($"Detached {name} from {session.DisplayName}.");
-            await _explorer.RefreshDatabaseAsync(session);
+            await OnSchemaChangedAsync(session);
         });
 
     // ---- Window layout ------------------------------------------------------------------------

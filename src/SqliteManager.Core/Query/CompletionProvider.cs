@@ -10,6 +10,9 @@ public enum CompletionKind
     View,
     Column,
     Function,
+
+    /// <summary>The schema name of an attached database.</summary>
+    Schema,
 }
 
 /// <summary>One suggestion. <see cref="InsertText"/> is quoted when the name needs it.</summary>
@@ -55,20 +58,36 @@ public static class CompletionProvider
         var prefix = text[wordStart..caret];
         if (wordStart > 0 && text[wordStart - 1] == '.')
         {
-            var qualifier = ReadQualifier(text, wordStart - 1);
+            var qualifier = ReadQualifier(text, wordStart - 1, out var qualifierStart);
             if (qualifier is null)
             {
                 return CompletionResult.None(caret);
             }
 
-            var statement = SqlScriptSplitter.FindAt(text, caret);
-            var table = ResolveTable(qualifier, statement?.Text ?? string.Empty, schema);
-            if (table is null || !schema.Columns.TryGetValue(table, out var columns))
+            // schema.table.| : columns of that table in that schema.
+            var outer = qualifierStart > 0 && text[qualifierStart - 1] == '.' ? ReadQualifier(text, qualifierStart - 1, out _) : null;
+            if (outer is not null)
             {
-                return new CompletionResult(wordStart, prefix, []);
+                var qualified = FindTable(new TableRef(outer, qualifier), schema);
+                return new CompletionResult(wordStart, prefix, qualified is null ? [] : ColumnItems(qualified.Value, schema, prefix));
             }
 
-            return new CompletionResult(wordStart, prefix, Filter(columns.Select(c => Item(c, CompletionKind.Column)), prefix));
+            var statement = SqlScriptSplitter.FindAt(text, caret);
+            var aliases = FindTableReferences(statement?.Text ?? string.Empty, schema);
+            // An alias wins only when it names a known table: in "FROM aux.|" the half-typed source is not one.
+            if (aliases.TryGetValue(qualifier, out var aliased) && FindTable(aliased, schema) is not null)
+            {
+                return new CompletionResult(wordStart, prefix, ColumnItems(aliased, schema, prefix));
+            }
+
+            // schema.| : tables and views of main or of an attached database.
+            if (SchemaTables(qualifier, schema) is { } tables)
+            {
+                return new CompletionResult(wordStart, prefix, Filter(tables, prefix));
+            }
+
+            var table = FindTable(new TableRef(null, qualifier), schema);
+            return new CompletionResult(wordStart, prefix, table is null ? [] : ColumnItems(table.Value, schema, prefix));
         }
 
         if (prefix.Length == 0 && !explicitRequest)
@@ -79,7 +98,8 @@ public static class CompletionProvider
         var items = SqlKeywords.All.Select(k => new CompletionItem(k, k, CompletionKind.Keyword))
             .Concat(schema.Tables.Select(t => Item(t, CompletionKind.Table)))
             .Concat(schema.Views.Select(v => Item(v, CompletionKind.View)))
-            .Concat(schema.Functions.Select(f => new CompletionItem(f, f, CompletionKind.Function)));
+            .Concat(schema.Functions.Select(f => new CompletionItem(f, f, CompletionKind.Function)))
+            .Concat(schema.AttachedSchemas.Select(a => Item(a.Name, CompletionKind.Schema)));
 
         return new CompletionResult(wordStart, prefix, Filter(items, prefix));
     }
@@ -88,9 +108,16 @@ public static class CompletionProvider
     /// Maps aliases and table names in the FROM and JOIN clauses of <paramref name="statement"/>
     /// to table names. Keys ignore case.
     /// </summary>
-    public static IReadOnlyDictionary<string, string> FindTableAliases(string statement, SchemaSnapshot schema)
+    public static IReadOnlyDictionary<string, string> FindTableAliases(string statement, SchemaSnapshot schema) =>
+        FindTableReferences(statement, schema).ToDictionary(p => p.Key, p => p.Value.Name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A table or view. <see cref="Schema"/> is null for main, otherwise an attached schema name.</summary>
+    private readonly record struct TableRef(string? Schema, string Name);
+
+    /// <summary>Like <see cref="FindTableAliases"/>, but keeps the schema of <c>schema.table</c> sources.</summary>
+    private static Dictionary<string, TableRef> FindTableReferences(string statement, SchemaSnapshot schema)
     {
-        var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new Dictionary<string, TableRef>(StringComparer.OrdinalIgnoreCase);
         var tokens = Tokenize(statement);
         for (var i = 0; i < tokens.Count; i++)
         {
@@ -111,14 +138,15 @@ public static class CompletionProvider
 
                 j++;
 
-                // schema.table: keep only the table part.
+                string? schemaName = null;
                 if (j + 1 < tokens.Count && tokens[j].Symbol == '.' && tokens[j + 1].Name is { } tablePart)
                 {
+                    schemaName = name;
                     name = tablePart;
                     j += 2;
                 }
 
-                var table = schema.Tables.Concat(schema.Views).FirstOrDefault(t => t.Equals(name, StringComparison.OrdinalIgnoreCase)) ?? name;
+                var table = FindTable(new TableRef(schemaName, name), schema) ?? new TableRef(schemaName, name);
                 aliases.TryAdd(name, table);
 
                 if (j < tokens.Count && tokens[j].Word is { } asWord && asWord.Equals("AS", StringComparison.OrdinalIgnoreCase))
@@ -145,21 +173,64 @@ public static class CompletionProvider
         return aliases;
     }
 
-    private static string? ResolveTable(string qualifier, string statement, SchemaSnapshot schema)
+    /// <summary>
+    /// Finds a table or view with its real spelling. Without a schema, main is searched first and then
+    /// the attached databases in attach order, the same order SQLite uses. Returns null when not found.
+    /// </summary>
+    private static TableRef? FindTable(TableRef reference, SchemaSnapshot schema)
     {
-        var aliases = FindTableAliases(statement, schema);
-        if (aliases.TryGetValue(qualifier, out var table))
+        static string? Match(IEnumerable<string> names, string name) =>
+            names.FirstOrDefault(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+        var inMain = reference.Schema is null || reference.Schema.Equals("main", StringComparison.OrdinalIgnoreCase);
+        if (inMain && Match(schema.Columns.Keys.Concat(schema.Tables).Concat(schema.Views), reference.Name) is { } mainName)
         {
-            return table;
+            return new TableRef(null, mainName);
         }
 
-        return schema.Columns.Keys.FirstOrDefault(t => t.Equals(qualifier, StringComparison.OrdinalIgnoreCase));
+        IEnumerable<AttachedSchema> candidates = reference.Schema is null
+            ? schema.AttachedSchemas
+            : schema.FindAttached(reference.Schema) is { } one ? [one] : [];
+        foreach (var attached in candidates)
+        {
+            if (Match(attached.Columns.Keys.Concat(attached.Tables).Concat(attached.Views), reference.Name) is { } attachedName)
+            {
+                return new TableRef(attached.Name, attachedName);
+            }
+        }
+
+        return null;
     }
 
-    /// <summary>Reads the identifier that ends just before the dot at <paramref name="dot"/>.</summary>
-    private static string? ReadQualifier(string text, int dot)
+    private static List<CompletionItem> ColumnItems(TableRef table, SchemaSnapshot schema, string prefix)
+    {
+        var columnsByTable = table.Schema is null ? schema.Columns : schema.FindAttached(table.Schema)?.Columns;
+        return columnsByTable is not null && columnsByTable.TryGetValue(table.Name, out var columns)
+            ? Filter(columns.Select(c => Item(c, CompletionKind.Column)), prefix)
+            : [];
+    }
+
+    /// <summary>Tables and views of <c>main</c> or of an attached database; null when the name is neither.</summary>
+    private static IEnumerable<CompletionItem>? SchemaTables(string schemaName, SchemaSnapshot schema)
+    {
+        if (schemaName.Equals("main", StringComparison.OrdinalIgnoreCase))
+        {
+            return schema.Tables.Select(t => Item(t, CompletionKind.Table)).Concat(schema.Views.Select(v => Item(v, CompletionKind.View)));
+        }
+
+        return schema.FindAttached(schemaName) is { } attached
+            ? attached.Tables.Select(t => Item(t, CompletionKind.Table)).Concat(attached.Views.Select(v => Item(v, CompletionKind.View)))
+            : null;
+    }
+
+    /// <summary>
+    /// Reads the identifier that ends just before the dot at <paramref name="dot"/>.
+    /// <paramref name="start"/> receives where it starts (its opening quote, if quoted).
+    /// </summary>
+    private static string? ReadQualifier(string text, int dot, out int start)
     {
         var end = dot;
+        start = dot;
         if (end == 0)
         {
             return null;
@@ -169,13 +240,14 @@ public static class CompletionProvider
         if (close is '"' or '`' or ']')
         {
             var open = close == ']' ? '[' : close;
-            var start = text.LastIndexOf(open, end - 2 < 0 ? 0 : end - 2);
-            if (start < 0 || start == end - 1)
+            var openAt = text.LastIndexOf(open, end - 2 < 0 ? 0 : end - 2);
+            if (openAt < 0 || openAt == end - 1)
             {
                 return null;
             }
 
-            var inner = text[(start + 1)..(end - 1)];
+            start = openAt;
+            var inner = text[(openAt + 1)..(end - 1)];
             return close == ']' ? inner : inner.Replace(new string(close, 2), close.ToString(), StringComparison.Ordinal);
         }
 
@@ -185,6 +257,7 @@ public static class CompletionProvider
             wordStart--;
         }
 
+        start = wordStart;
         return wordStart == end ? null : text[wordStart..end];
     }
 

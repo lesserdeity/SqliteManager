@@ -43,14 +43,33 @@ public sealed record IndexInfo(
     bool IsPartial,
     IReadOnlyList<string?> Columns);
 
-/// <summary>Names from the live schema, used for autocomplete. Column lookups ignore case.</summary>
+/// <summary>Table, view, and column names of one attached database (ATTACH DATABASE ... AS <see cref="Name"/>).</summary>
+public sealed record AttachedSchema(
+    string Name,
+    IReadOnlyList<string> Tables,
+    IReadOnlyList<string> Views,
+    IReadOnlyDictionary<string, IReadOnlyList<string>> Columns);
+
+/// <summary>
+/// Names from the live schema, used for autocomplete. <see cref="Tables"/>, <see cref="Views"/>, and
+/// <see cref="Columns"/> describe the main database; <see cref="Attached"/> lists attached databases in attach order.
+/// Name lookups ignore case.
+/// </summary>
 public sealed record SchemaSnapshot(
     IReadOnlyList<string> Tables,
     IReadOnlyList<string> Views,
     IReadOnlyDictionary<string, IReadOnlyList<string>> Columns,
-    IReadOnlyList<string> Functions)
+    IReadOnlyList<string> Functions,
+    IReadOnlyList<AttachedSchema>? Attached = null)
 {
     public static SchemaSnapshot Empty { get; } = new([], [], new Dictionary<string, IReadOnlyList<string>>(), []);
+
+    /// <summary>Attached databases; never null.</summary>
+    public IReadOnlyList<AttachedSchema> AttachedSchemas => Attached ?? [];
+
+    /// <summary>The attached database with this schema name, or null. main and temp are not attached databases.</summary>
+    public AttachedSchema? FindAttached(string name) =>
+        AttachedSchemas.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }
 
 public enum TableKind

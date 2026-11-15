@@ -22,8 +22,8 @@ public sealed record SqlStatement(string Text, int StartOffset, int EndOffset, i
         }
     }
 
-    /// <summary>True for CREATE, ALTER, and DROP statements.</summary>
-    public bool ChangesSchema => FirstKeyword is "CREATE" or "ALTER" or "DROP";
+    /// <summary>True for CREATE, ALTER, DROP, ATTACH, and DETACH statements.</summary>
+    public bool ChangesSchema => FirstKeyword is "CREATE" or "ALTER" or "DROP" or "ATTACH" or "DETACH";
 }
 
 /// <summary>

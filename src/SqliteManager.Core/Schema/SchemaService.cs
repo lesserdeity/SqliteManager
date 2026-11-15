@@ -118,45 +118,29 @@ public sealed class SchemaService
             indexes);
     }
 
-    /// <summary>Reads the table, view, column, and function names used for autocomplete.</summary>
+    /// <summary>
+    /// Reads the table, view, column, and function names used for autocomplete,
+    /// for the main database and every attached database.
+    /// </summary>
     public async Task<SchemaSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
-        var objects = await _session.QueryAsync(
-            "SELECT type, name FROM sqlite_schema WHERE type IN ('table', 'view') ORDER BY name COLLATE NOCASE",
-            r => (Type: r.GetString(0), Name: r.GetString(1)),
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var main = await ReadSchemaNamesAsync("main", cancellationToken).ConfigureAwait(false);
 
-        var columns = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-        try
+        var attachedNames = await _session.QueryAsync(
+            "SELECT name FROM pragma_database_list WHERE name NOT IN ('main', 'temp') ORDER BY seq",
+            r => r.GetString(0),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var attached = new List<AttachedSchema>();
+        foreach (var name in attachedNames)
         {
-            var rows = await _session.QueryAsync(
-                "SELECT m.name, p.name FROM sqlite_schema AS m JOIN pragma_table_info(m.name) AS p " +
-                "WHERE m.type IN ('table', 'view') ORDER BY m.name, p.cid",
-                r => (Table: r.GetString(0), Column: r.GetString(1)),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            foreach (var group in rows.GroupBy(r => r.Table, StringComparer.OrdinalIgnoreCase))
+            try
             {
-                columns[group.Key] = group.Select(r => r.Column).ToArray();
+                attached.Add(await ReadSchemaNamesAsync(name, cancellationToken).ConfigureAwait(false));
             }
-        }
-        catch (SqliteException)
-        {
-            // A broken view (for example one that uses a dropped table) fails the combined query.
-            // Read each object on its own and skip the ones that fail.
-            foreach (var (_, name) in objects)
+            catch (SqliteException)
             {
-                try
-                {
-                    columns[name] = await _session.QueryAsync(
-                        "SELECT name FROM pragma_table_info(@name) ORDER BY cid",
-                        r => r.GetString(0),
-                        new Dictionary<string, object?> { ["@name"] = name },
-                        cancellationToken).ConfigureAwait(false);
-                }
-                catch (SqliteException)
-                {
-                    columns[name] = [];
-                }
+                // An attached file that cannot be read (corrupt, or not a database) still completes as a name.
+                attached.Add(new AttachedSchema(name, [], [], new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)));
             }
         }
 
@@ -173,11 +157,65 @@ public sealed class SchemaService
             functions = SqlKeywords.BuiltInFunctions;
         }
 
-        return new SchemaSnapshot(
+        return new SchemaSnapshot(main.Tables, main.Views, main.Columns, functions, attached);
+    }
+
+    /// <summary>Reads table, view, and column names of one schema (main or an attached database).</summary>
+    private async Task<AttachedSchema> ReadSchemaNamesAsync(string schema, CancellationToken cancellationToken)
+    {
+        var quoted = SqlIdentifier.Quote(schema);
+        var schemaParameter = new Dictionary<string, object?> { ["@schema"] = schema };
+        var objects = await _session.QueryAsync(
+            $"SELECT type, name FROM {quoted}.sqlite_schema WHERE type IN ('table', 'view') ORDER BY name COLLATE NOCASE",
+            r => (Type: r.GetString(0), Name: r.GetString(1)),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        var columns = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var rows = await _session.QueryAsync(
+                $"SELECT m.name, p.name FROM {quoted}.sqlite_schema AS m JOIN pragma_table_info(m.name, @schema) AS p " +
+                "WHERE m.type IN ('table', 'view') ORDER BY m.name, p.cid",
+                r => (Table: r.GetString(0), Column: r.GetString(1)),
+                schemaParameter,
+                cancellationToken).ConfigureAwait(false);
+            foreach (var group in rows.GroupBy(r => r.Table, StringComparer.OrdinalIgnoreCase))
+            {
+                columns[group.Key] = group.Select(r => r.Column).ToArray();
+            }
+        }
+        catch (SqliteException)
+        {
+            // A broken view (for example one that uses a dropped table) fails the combined query.
+            // Read each object on its own and skip the ones that fail.
+            foreach (var (_, name) in objects)
+            {
+                try
+                {
+                    columns[name] = await _session.QueryAsync(
+                        "SELECT name FROM pragma_table_info(@name, @schema) ORDER BY cid",
+                        r => r.GetString(0),
+                        new Dictionary<string, object?> { ["@name"] = name, ["@schema"] = schema },
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (SqliteException)
+                {
+                    columns[name] = [];
+                }
+            }
+        }
+
+        // Tables with no readable columns still need an entry, so lookups find them.
+        foreach (var (_, name) in objects)
+        {
+            columns.TryAdd(name, []);
+        }
+
+        return new AttachedSchema(
+            schema,
             objects.Where(o => o.Type == "table").Select(o => o.Name).ToArray(),
             objects.Where(o => o.Type == "view").Select(o => o.Name).ToArray(),
-            columns,
-            functions);
+            columns);
     }
 
     private static SchemaObjectType ParseObjectType(string type) => type switch

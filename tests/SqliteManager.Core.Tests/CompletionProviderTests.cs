@@ -1,3 +1,4 @@
+using SqliteManager.Core.Data;
 using SqliteManager.Core.Query;
 using SqliteManager.Core.Schema;
 
@@ -167,5 +168,139 @@ public class CompletionProviderTests
 
         Assert.Equal(["x"], snapshot.Columns["a"]);
         Assert.Empty(snapshot.Columns["v"]);
+    }
+
+    // ---- Attached databases -------------------------------------------------------------------
+
+    private static readonly SchemaSnapshot WithAttached = Schema with
+    {
+        Attached =
+        [
+            new AttachedSchema(
+                "aux",
+                Tables: ["invoices", "customers"],
+                Views: ["v_open"],
+                Columns: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["invoices"] = ["invoice_no", "amount"],
+                    ["customers"] = ["cust_code", "region"],
+                    ["v_open"] = ["invoice_no"],
+                }),
+            new AttachedSchema(
+                "my archive",
+                Tables: ["old_orders"],
+                Views: [],
+                Columns: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["old_orders"] = ["archived_at"],
+                }),
+        ],
+    };
+
+    private static CompletionResult AtAttached(string textWithCaret, bool explicitRequest = false)
+    {
+        var caret = textWithCaret.IndexOf('|', StringComparison.Ordinal);
+        return CompletionProvider.Complete(textWithCaret.Remove(caret, 1), caret, WithAttached, explicitRequest);
+    }
+
+    [Fact]
+    public void Schema_dot_lists_tables_and_views_of_the_attached_database()
+    {
+        var result = AtAttached("SELECT * FROM aux.|");
+
+        Assert.Equal(["customers", "invoices", "v_open"], Texts(result));
+        Assert.Contains(result.Items, i => i is { Text: "invoices", Kind: CompletionKind.Table });
+        Assert.Contains(result.Items, i => i is { Text: "v_open", Kind: CompletionKind.View });
+        Assert.Equal(["invoices"], Texts(AtAttached("SELECT * FROM AUX.in|")));
+    }
+
+    [Fact]
+    public void Quoted_schema_names_work_and_main_lists_main_tables()
+    {
+        Assert.Equal(["old_orders"], Texts(AtAttached("SELECT * FROM \"my archive\".|")));
+        Assert.Equal(["customers", "order lines", "orders", "v_totals"], Texts(AtAttached("SELECT * FROM main.|")));
+    }
+
+    [Fact]
+    public void Attached_schema_names_are_suggested_with_quoting_when_needed()
+    {
+        var aux = Assert.Single(AtAttached("SELECT * FROM au|").Items, i => i.Kind == CompletionKind.Schema);
+        Assert.Equal("aux", aux.InsertText);
+
+        var archive = Assert.Single(AtAttached("SELECT * FROM my|").Items, i => i.Kind == CompletionKind.Schema);
+        Assert.Equal("\"my archive\"", archive.InsertText);
+
+        Assert.DoesNotContain(At("SELECT * FROM au|").Items, i => i.Kind == CompletionKind.Schema);
+    }
+
+    [Fact]
+    public void Alias_of_an_attached_table_lists_its_columns()
+    {
+        Assert.Equal(["amount", "invoice_no"], Texts(AtAttached("SELECT i.| FROM aux.invoices AS i")));
+        Assert.Equal(["region"], Texts(AtAttached("SELECT c.r| FROM aux.customers c JOIN orders o ON o.customer_id = c.cust_code")));
+    }
+
+    [Fact]
+    public void Schema_qualified_table_in_FROM_uses_that_schema_even_when_main_has_the_same_name()
+    {
+        // main also has a customers table (id, name, email).
+        Assert.Equal(["cust_code", "region"], Texts(AtAttached("SELECT c.| FROM aux.customers c")));
+        Assert.Equal(["email", "id", "name"], Texts(AtAttached("SELECT c.| FROM customers c")));
+        Assert.Equal(["email", "id", "name"], Texts(AtAttached("SELECT c.| FROM main.customers c")));
+    }
+
+    [Fact]
+    public void Schema_table_dot_lists_columns()
+    {
+        Assert.Equal(["cust_code", "region"], Texts(AtAttached("SELECT aux.customers.| FROM aux.customers")));
+        Assert.Equal(["archived_at"], Texts(AtAttached("SELECT \"my archive\".old_orders.| FROM \"my archive\".old_orders")));
+        Assert.Empty(AtAttached("SELECT aux.nope.| FROM aux.nope").Items);
+    }
+
+    [Fact]
+    public void Unqualified_table_found_only_in_an_attached_database_resolves_there()
+    {
+        Assert.Equal(["amount", "invoice_no"], Texts(AtAttached("SELECT invoices.| FROM invoices")));
+        Assert.Equal(["archived_at"], Texts(AtAttached("SELECT x.| FROM old_orders x")));
+    }
+
+    [Fact]
+    public void FindTableAliases_keeps_table_names_for_schema_qualified_sources()
+    {
+        var aliases = CompletionProvider.FindTableAliases("SELECT * FROM aux.invoices i JOIN orders o ON 1", WithAttached);
+
+        Assert.Equal("invoices", aliases["i"]);
+        Assert.Equal("orders", aliases["o"]);
+    }
+
+    [Fact]
+    public async Task Live_snapshot_includes_attached_databases()
+    {
+        await using var db = await TestDatabase.CreateAsync("CREATE TABLE local_t (id INTEGER)");
+        var otherPath = Path.Combine(db.Folder, "other.db");
+        var other = await db.Manager.CreateAsync(otherPath);
+        await other.ExecuteNonQueryAsync("CREATE TABLE remote_t (code TEXT, qty INTEGER)");
+        await other.ExecuteNonQueryAsync("CREATE VIEW remote_v AS SELECT code FROM remote_t");
+        await other.ExecuteNonQueryAsync("CREATE TABLE local_t (different_column TEXT)");
+        await db.Manager.CloseAsync(other);
+        await new AttachService(db.Session).AttachAsync(otherPath, "my db");
+
+        var snapshot = await new SchemaService(db.Session).GetSnapshotAsync();
+
+        Assert.Equal(["local_t"], snapshot.Tables);
+        Assert.Equal(["id"], snapshot.Columns["local_t"]);
+        var attached = Assert.Single(snapshot.AttachedSchemas);
+        Assert.Equal("my db", attached.Name);
+        Assert.Equal(["local_t", "remote_t"], attached.Tables);
+        Assert.Equal(["remote_v"], attached.Views);
+        Assert.Equal(["code", "qty"], attached.Columns["remote_t"]);
+        Assert.Equal(["different_column"], attached.Columns["LOCAL_T"]);
+        Assert.Equal(["code"], attached.Columns["remote_v"]);
+
+        var result = CompletionProvider.Complete("SELECT * FROM \"my db\".", 22, snapshot);
+        Assert.Equal(["local_t", "remote_t", "remote_v"], Texts(result));
+
+        await new AttachService(db.Session).DetachAsync("my db");
+        Assert.Empty((await new SchemaService(db.Session).GetSnapshotAsync()).AttachedSchemas);
     }
 }

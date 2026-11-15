@@ -110,10 +110,10 @@ public class SqlScriptSplitterTests
     [Fact]
     public void FirstKeyword_and_ChangesSchema()
     {
-        var statements = SqlScriptSplitter.Split("create table t(x); Drop view v; select 1; alter table t add y");
+        var statements = SqlScriptSplitter.Split("create table t(x); Drop view v; select 1; alter table t add y; attach 'a.db' as a; detach a");
 
-        Assert.Equal(["CREATE", "DROP", "SELECT", "ALTER"], statements.Select(s => s.FirstKeyword));
-        Assert.Equal([true, true, false, true], statements.Select(s => s.ChangesSchema));
+        Assert.Equal(["CREATE", "DROP", "SELECT", "ALTER", "ATTACH", "DETACH"], statements.Select(s => s.FirstKeyword));
+        Assert.Equal([true, true, false, true, true, true], statements.Select(s => s.ChangesSchema));
     }
 
     [Theory]
